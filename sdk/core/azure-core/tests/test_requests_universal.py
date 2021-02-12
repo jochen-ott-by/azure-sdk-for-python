@@ -25,7 +25,9 @@
 # --------------------------------------------------------------------------
 import concurrent.futures
 import pytest
+import mock
 import requests.utils
+from azure.core.pipeline import Pipeline, PipelineResponse
 
 from azure.core.pipeline.transport import HttpRequest, RequestsTransport, RequestsTransportResponse
 from azure.core.configuration import Configuration
@@ -82,3 +84,49 @@ def test_requests_response_text():
             {'Content-Type': 'text/plain'}
         )
         assert res.text(encoding) == '56', "Encoding {} didn't work".format(encoding)
+
+
+def test_response_streaming_error_behavior():
+    # Test to reproduce https://github.com/Azure/azure-sdk-for-python/issues/16723
+    block_size = 103
+    total_response_size = 500
+    req_response = requests.Response()
+    req_request = requests.Request()
+
+    class FakeStreamWithConnectionError:
+        # fake object for urllib3.response.HTTPResponse
+
+        def stream(self, chunk_size, decode_content=False):
+            assert chunk_size == block_size
+            left = total_response_size
+            while left > 0:
+                if left <= block_size:
+                    raise requests.exceptions.ConnectionError()
+                data = b"X" * min(chunk_size, left)
+                left -= len(data)
+                yield data
+
+        def close(self):
+            pass
+
+    req_response.raw = FakeStreamWithConnectionError()
+
+    response = RequestsTransportResponse(
+        req_request,
+        req_response,
+        block_size,
+    )
+
+    def mock_run(self, *args, **kwargs):
+        return PipelineResponse(
+            None,
+            requests.Response(),
+            None,
+        )
+
+    transport = RequestsTransport()
+    pipeline = Pipeline(transport)
+    pipeline.run = mock_run
+    downloader = response.stream_download(pipeline)
+    full_response = b"".join(downloader)
+    assert len(full_response) == total_response_size
