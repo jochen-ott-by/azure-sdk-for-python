@@ -77,16 +77,43 @@ function Get-PkgProperties
     (
         [Parameter(Mandatory = $true)]
         [string]$PackageName,
-        [Parameter(Mandatory = $true)]
         [string]$ServiceDirectory
     )
 
-    $pkgDirectoryPath = $null
-    $serviceDirectoryPath = Join-Path $RepoRoot "sdk" $ServiceDirectory
-    if (!(Test-Path $serviceDirectoryPath))
+    if ($ServiceDirectory)
     {
-        LogError "Service Directory $ServiceDirectory does not exist"
-        return $null
+        $serviceDirectoryPath = Join-Path $RepoRoot "sdk" $ServiceDirectory
+        if (!(Test-Path $serviceDirectoryPath))
+        {
+            LogError "Service Directory [ $ServiceDirectory ] does not exist"
+            return $null
+        }
+    }
+    else
+    {
+        $searchDir = Join-Path $RepoRoot "sdk"
+        foreach ($dir in (Get-ChildItem $searchDir -Directory))
+        {
+            $serviceDirectoryPath = Join-Path $searchDir $dir.Name
+            $ciYmlPath = Join-Path $serviceDirectoryPath "ci.yml"
+
+            if (Test-Path $ciYmlPath)
+            {
+                $activePkgList = Get-PkgListFromYml -ciYmlPath $ciYmlPath
+                $pkgInfoFromYml = $activePkgList | Where-Object { $_["name"] -eq $PackageName }
+                if ($pkgInfoFromYml.Count -gt 0)
+                {
+                    LogDebug "Service Directory path for [ $PackageName ] is [ $serviceDirectoryPath]"
+                    break
+                }
+
+            }
+        }
+        if ($null -eq $pkgInfoFromYml)
+        {
+            LogError "Package [ $PackageName ] not found in this repository. Ensure the Package Name is correct."
+            return $null
+        }
     }
 
     $directoriesPresent = Get-ChildItem $serviceDirectoryPath -Directory
@@ -179,17 +206,6 @@ function Operate-OnPackages ($activePkgList, $ServiceDirectory, [Array]$pkgProps
 
 function Get-PkgListFromYml ($ciYmlPath)
 {
-    $ProgressPreference = "SilentlyContinue"
-    if ((Get-PSRepository | ?{$_.Name -eq "PSGallery"}).Count -eq 0)
-    {
-        Register-PSRepository -Default -ErrorAction:SilentlyContinue
-    }
-
-    if ((Get-Module -ListAvailable -Name powershell-yaml | ?{$_.Version -eq "0.4.2"}).Count -eq 0)
-    {
-        Install-Module -Name powershell-yaml -RequiredVersion 0.4.2 -Force -Scope CurrentUser
-    }
-
     $ciYmlContent = Get-Content $ciYmlPath -Raw
     $ciYmlObj = ConvertFrom-Yaml $ciYmlContent -Ordered
     if ($ciYmlObj.Contains("stages"))
@@ -206,3 +222,20 @@ function Get-PkgListFromYml ($ciYmlPath)
     }
     return $artifactsInCI
 }
+
+function Install-PowershellYamlModule
+{
+    $ProgressPreference = "SilentlyContinue"
+    if ((Get-PSRepository | ?{$_.Name -eq "PSGallery"}).Count -eq 0)
+    {
+        Register-PSRepository -Default -ErrorAction:SilentlyContinue
+    }
+
+    if ((Get-Module -ListAvailable -Name powershell-yaml | ?{$_.Version -eq "0.4.2"}).Count -eq 0)
+    {
+        Install-Module -Name powershell-yaml -RequiredVersion 0.4.2 -Force -Scope CurrentUser
+    }
+    $ProgressPreference = "Continue" # Reset to Default value
+}
+
+Install-PowershellYamlModule
