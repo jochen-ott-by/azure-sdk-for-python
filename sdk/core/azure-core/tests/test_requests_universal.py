@@ -117,16 +117,6 @@ def test_response_streaming_error_behavior():
         block_size,
     )
 
-    def mock_run(self, *args, **kwargs):
-        return PipelineResponse(
-            None,
-            requests.Response(),
-            None,
-        )
-
-    transport = RequestsTransport()
-    pipeline = Pipeline(transport)
-    pipeline.run = mock_run
-    downloader = response.stream_download(pipeline)
-    full_response = b"".join(downloader)
-    assert len(full_response) == total_response_size
+    downloader = response.stream_download(None)
+    with pytest.raises(requests.exceptions.ConnectionError):
+        list(downloader)
