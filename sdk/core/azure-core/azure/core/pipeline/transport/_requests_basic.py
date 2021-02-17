@@ -116,42 +116,27 @@ class StreamDownloadGenerator(object):
         return self
 
     def __next__(self):
-        retry_active = True
-        retry_total = 3
-        retry_interval = 1  # 1 second
-        while retry_active:
-            try:
-                chunk = next(self.iter_content_func)
-                if not chunk:
-                    raise StopIteration()
-                self.downloaded += self.block_size
-                return chunk
-            except StopIteration:
-                self.response.internal_response.close()
-                raise StopIteration()
-            except (requests.exceptions.ChunkedEncodingError,
-                    requests.exceptions.ConnectionError):
-                retry_total -= 1
-                if retry_total <= 0:
-                    retry_active = False
-                else:
-                    time.sleep(retry_interval)
-                    headers = {'range': 'bytes=' + str(self.downloaded) + '-'}
-                    resp = self.pipeline.run(self.request, stream=True, headers=headers)
-                    if resp.http_response.status_code == 416:
-                        raise
-                    chunk = next(self.iter_content_func)
-                    if not chunk:
-                        raise StopIteration()
-                    self.downloaded += len(chunk)
-                    return chunk
-                continue
-            except requests.exceptions.StreamConsumedError:
-                raise
-            except Exception as err:
-                _LOGGER.warning("Unable to stream download: %s", err)
-                self.response.internal_response.close()
-                raise
+        try:
+            # `self.iter_content_func` is a generator.
+            # In case any exception leaves from the line below, `next(self.iter_content_func)`,
+            # *all* subsequent calls to `next(self.iter_content_func)` will
+            # raise StopIteration (irrespective if there is some data left
+            # on the stream or not). Therefore, re-trying at this point
+            # is not possible without re-creating the generator. However,
+            # there is not enough context information to do so reliably.
+            # Therefore, simply let all exceptions propagate.
+            chunk = next(self.iter_content_func)
+            self.downloaded += self.block_size
+            return chunk
+        except StopIteration:
+            self.response.internal_response.close()
+            raise StopIteration()
+        except requests.exceptions.StreamConsumedError:
+            raise
+        except Exception as err:
+            _LOGGER.warning("Unable to stream download: %s", err)
+            self.response.internal_response.close()
+            raise
     next = __next__  # Python 2 compatibility.
 
 
